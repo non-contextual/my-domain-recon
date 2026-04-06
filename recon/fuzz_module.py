@@ -103,55 +103,80 @@ def _structural_fingerprint(body: str) -> str:
     return s[:600]
 
 
-async def get_root_fingerprint(client: httpx.AsyncClient, base_url: str) -> tuple[int, str, str]:
+async def get_root_fingerprint(client: httpx.AsyncClient, base_url: str) -> tuple[int, str, str, str]:
     """
-    向一个肯定不存在的路径发请求，检测是否为 SPA catch-all。
-    返回 (canary_status, canary_content_type, canary_structural_fingerprint)
+    检测两种常见误报模式：
+    1. SPA catch-all：所有路径返回 200 + 同一份 HTML
+    2. 全站 302 redirect：根路径本身就是 302（如 apex → www）
+
+    返回 (canary_status, canary_content_type, canary_structural_fingerprint, redirect_location_prefix)
+    redirect_location_prefix 非空时表示「全站统一跳转」模式，需过滤相同目标的 302
     """
+    # 先检查根路径是否本身就是 302（全站跳转）
+    root_redirect_prefix = ""
+    try:
+        root_resp = await client.get(base_url.rstrip("/") + "/", follow_redirects=False)
+        if root_resp.status_code in (301, 302, 307, 308):
+            loc = root_resp.headers.get("location", "")
+            # 提取跳转目标的 origin 部分（如 https://www.anthropic.com）
+            if loc:
+                from urllib.parse import urlparse
+                parsed = urlparse(loc)
+                root_redirect_prefix = f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        pass
+
+    # 再检测 SPA catch-all（canary 路径返回 200）
     canary_url = f"{base_url.rstrip('/')}/__osint_canary_404_check__"
     try:
         resp = await client.get(canary_url, follow_redirects=True)
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
         if resp.status_code == 200 and "html" in content_type:
             fingerprint = _structural_fingerprint(resp.text[:8000])
-            return (200, content_type, fingerprint)
+            return (200, content_type, fingerprint, root_redirect_prefix)
     except Exception:
         pass
-    return (404, "", "")
+    return (404, "", "", root_redirect_prefix)
 
 
 async def check_path(
     client: httpx.AsyncClient,
     base_url: str,
     path: str,
-    spa_fingerprint: tuple[int, str, str] | None = None,
+    spa_fingerprint: tuple[int, str, str, str] | None = None,
 ) -> dict | None:
     """
     异步检查单个路径是否存在。
-    返回 None 表示路径不存在或是 SPA 误报，否则返回发现信息。
+    返回 None 表示路径不存在或是已知误报，否则返回发现信息。
     """
     url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
     try:
         resp = await client.get(url, follow_redirects=False)
-        # 过滤掉明显的「找不到」响应
+
         if resp.status_code in (404, 410):
             return None
 
         content_length = int(resp.headers.get("content-length", 0))
+        location = resp.headers.get("location", "") if resp.status_code in (301, 302, 307, 308) else ""
 
-        # SPA 过滤：若站点对所有路径返回 200，检查响应体结构是否与 canary 相同
+        # 过滤 1：全站统一 302 跳转（如 anthropic.com → www.anthropic.com）
+        # 若根路径本身就是 302 到某个 origin，跳转目标也是同一个 origin → 误报
+        if spa_fingerprint and spa_fingerprint[3] and resp.status_code in (301, 302, 307, 308):
+            redirect_prefix = spa_fingerprint[3]
+            if location.startswith(redirect_prefix):
+                return None
+
+        # 过滤 2：SPA catch-all（canary 路径返回 200，结构相似）
         if spa_fingerprint and spa_fingerprint[0] == 200 and resp.status_code == 200:
             content_type = resp.headers.get("content-type", "").split(";")[0].strip()
             if "html" in content_type:
                 page_fp = _structural_fingerprint(resp.text[:8000])
-                # 计算相似度：公共前缀长度 / 指纹总长度
                 canary_fp = spa_fingerprint[2]
                 min_len = min(len(page_fp), len(canary_fp))
                 if min_len > 50:
                     common = sum(a == b for a, b in zip(page_fp, canary_fp))
-                    similarity = common / min_len
-                    if similarity > 0.70:
-                        return None  # 结构相似，是 SPA catch-all 误报
+                    if common / min_len > 0.70:
+                        return None
 
         return {
             "path": path,
@@ -159,7 +184,7 @@ async def check_path(
             "status": resp.status_code,
             "content_length": content_length,
             "content_type": resp.headers.get("content-type", ""),
-            "redirect_to": resp.headers.get("location", "") if resp.status_code in (301, 302, 307, 308) else "",
+            "redirect_to": location,
         }
     except Exception:
         return None
