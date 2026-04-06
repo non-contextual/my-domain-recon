@@ -78,6 +78,71 @@ def detect_cdn_from_cname(cname_chain: list[str]) -> str | None:
     return None
 
 
+def analyze_email_security(domain: str, txt_records: list[str]) -> dict:
+    """
+    分析域名的邮件安全配置：SPF、DMARC、DKIM（常见 selector）。
+
+    返回：
+    {
+        "spf":   {"record": "v=spf1 ...", "valid": True},
+        "dmarc": {"record": "v=DMARC1 ...", "policy": "reject"},
+        "dkim":  {"selectors_found": ["google", "default"], "records": {...}},
+        "score": "strong" | "partial" | "missing",
+    }
+    """
+    result: dict = {"spf": None, "dmarc": None, "dkim": {"selectors_found": [], "records": {}}}
+
+    # --- SPF：在根域 TXT 记录里查找 ---
+    for txt in txt_records:
+        clean = txt.strip('"')
+        if clean.lower().startswith("v=spf1"):
+            result["spf"] = {"record": clean, "valid": True}
+            break
+
+    # --- DMARC：查 _dmarc.<domain> ---
+    dmarc_records = resolve_records(f"_dmarc.{domain}", "TXT")
+    for txt in dmarc_records:
+        clean = txt.strip('"')
+        if "v=DMARC1" in clean:
+            policy = "none"
+            for part in clean.split(";"):
+                part = part.strip()
+                if part.lower().startswith("p="):
+                    policy = part.split("=", 1)[1].strip().lower()
+            result["dmarc"] = {"record": clean, "policy": policy}
+            break
+
+    # --- DKIM：探测常见 selector ---
+    common_selectors = [
+        "default", "google", "mail", "k1", "k2", "selector1", "selector2",
+        "dkim", "smtp", "s1", "s2", "protonmail", "mailjet", "sendgrid",
+        "amazonses", "mandrill", "zoho",
+    ]
+    for sel in common_selectors:
+        records = resolve_records(f"{sel}._domainkey.{domain}", "TXT")
+        for txt in records:
+            clean = txt.strip('"')
+            if "v=DKIM1" in clean or "k=rsa" in clean or "p=" in clean:
+                result["dkim"]["selectors_found"].append(sel)
+                result["dkim"]["records"][sel] = clean[:120] + ("..." if len(clean) > 120 else "")
+                break
+
+    # --- 综合评级 ---
+    has_spf = result["spf"] is not None
+    dmarc_policy = result["dmarc"]["policy"] if result["dmarc"] else None
+    has_strong_dmarc = dmarc_policy in ("reject", "quarantine")
+
+    if has_spf and has_strong_dmarc:
+        score = "strong"
+    elif has_spf or result["dmarc"]:
+        score = "partial"
+    else:
+        score = "missing"
+
+    result["score"] = score
+    return result
+
+
 def run(domain: str) -> dict:
     """
     执行完整 DNS 侦察，返回结构化结果。
@@ -92,9 +157,11 @@ def run(domain: str) -> dict:
         "txt_records": ["v=spf1 ..."],
         "cname_chain": ["example.global.prod.fastly.net"],
         "cdn_hint": "Fastly",
+        "email_security": { "spf": {...}, "dmarc": {...}, "dkim": {...}, "score": "strong" },
     }
     """
     cname_chain = trace_cname_chain(domain)
+    txt_records = resolve_records(domain, "TXT")
 
     result = {
         "domain": domain,
@@ -102,9 +169,10 @@ def run(domain: str) -> dict:
         "aaaa_records": resolve_records(domain, "AAAA"),
         "mx_records": resolve_records(domain, "MX"),
         "ns_records": resolve_records(domain, "NS"),
-        "txt_records": resolve_records(domain, "TXT"),
+        "txt_records": txt_records,
         "cname_chain": cname_chain,
         "cdn_hint": detect_cdn_from_cname(cname_chain),
+        "email_security": analyze_email_security(domain, txt_records),
     }
 
     return result

@@ -241,11 +241,34 @@
       </div>
     </div>
     <div class="card">
-      <div class="label">Exposed Paths</div>
-      <div class="value {% if fuzz.findings | length > 0 %}red{% else %}green{% endif %}">
-        {{ fuzz.findings | length }}
+      <div class="label">Exposed (200)</div>
+      <div class="value {% if fuzz_exposed | length > 0 %}red{% else %}green{% endif %}">
+        {{ fuzz_exposed | length }}
       </div>
     </div>
+    <div class="card">
+      <div class="label">Restricted (403/401)</div>
+      <div class="value {% if fuzz_restricted | length > 0 %}yellow{% else %}green{% endif %}">
+        {{ fuzz_restricted | length }}
+      </div>
+    </div>
+    {% if tech and tech.techs %}
+    <div class="card">
+      <div class="label">Tech Stack</div>
+      <div class="value" style="font-size:12px; color:var(--purple);">
+        {{ tech.techs[:3] | join(", ") }}{% if tech.techs | length > 3 %} +{{ tech.techs | length - 3 }}{% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% set esec = dns.email_security %}
+    {% if esec %}
+    <div class="card">
+      <div class="label">Email Security</div>
+      <div class="value {% if esec.score == 'strong' %}green{% elif esec.score == 'partial' %}yellow{% else %}red{% endif %}">
+        {{ esec.score | upper }}
+      </div>
+    </div>
+    {% endif %}
     <div class="card">
       <div class="label">Registrar</div>
       <div class="value" style="font-size:12px; color:var(--text-muted);">
@@ -255,10 +278,33 @@
   </div>
 
   <!-- Alerts -->
-  {% if fuzz.findings %}
+  {% if shodan and shodan.all_vulns %}
   <div class="alert alert-red">
-    ⚠️ <strong>{{ fuzz.findings | length }} exposed path(s) detected</strong> —
-    including: {% for f in fuzz.findings[:3] %}<code>{{ f.path }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if fuzz.findings | length > 3 %} and more...{% endif %}
+    💀 <strong>{{ shodan.all_vulns | length }} CVE(s) detected via Shodan:</strong>
+    {% for cve in shodan.all_vulns[:5] %}<code>{{ cve }}</code>{% if not loop.last %} {% endif %}{% endfor %}{% if shodan.all_vulns | length > 5 %} and {{ shodan.all_vulns | length - 5 }} more...{% endif %}
+  </div>
+  {% endif %}
+  {% set esec = dns.email_security %}
+  {% if esec and esec.score == 'missing' %}
+  <div class="alert alert-red">
+    📧 <strong>Email security missing</strong> — No SPF or DMARC configured. Domain may be spoofable.
+  </div>
+  {% elif esec and esec.score == 'partial' %}
+  <div class="alert alert-yellow">
+    📧 <strong>Partial email security</strong> — SPF or DMARC is incomplete.
+    {% if esec.dmarc %}DMARC policy: <code>{{ esec.dmarc.policy }}</code>{% endif %}
+  </div>
+  {% endif %}
+  {% if fuzz_exposed %}
+  <div class="alert alert-red">
+    ⚠️ <strong>{{ fuzz_exposed | length }} exposed path(s) — readable (200):</strong>
+    {% for f in fuzz_exposed[:3] %}<code>{{ f.path }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if fuzz_exposed | length > 3 %} and {{ fuzz_exposed | length - 3 }} more...{% endif %}
+  </div>
+  {% endif %}
+  {% if fuzz_restricted %}
+  <div class="alert alert-yellow">
+    🔒 <strong>{{ fuzz_restricted | length }} restricted path(s) — exist but blocked (403/401):</strong>
+    {% for f in fuzz_restricted[:3] %}<code>{{ f.path }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if fuzz_restricted | length > 3 %} and {{ fuzz_restricted | length - 3 }} more...{% endif %}
   </div>
   {% endif %}
   {% if cdn.fastly_direct %}
@@ -363,6 +409,209 @@
     </div>
   </div>
 
+  <!-- Email Security Section -->
+  {% set esec = dns.email_security %}
+  {% if esec %}
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">📧</span> Email Security
+      <span class="tag" style="margin-left:auto;
+        {% if esec.score == 'strong' %}color:var(--green);{% elif esec.score == 'partial' %}color:var(--yellow);{% else %}color:var(--red);{% endif %}
+      ">{{ esec.score | upper }}</span>
+    </div>
+    <div class="section-body">
+      <table>
+        <tbody>
+          <!-- SPF -->
+          <tr>
+            <td style="width:80px; color:var(--text-muted);">SPF</td>
+            <td style="width:120px;">
+              {% if esec.spf %}
+              <span class="badge" style="background:#1a4731; color:var(--green);">✓ configured</span>
+              {% else %}
+              <span class="badge" style="background:#3d0a0a; color:var(--red);">✗ missing</span>
+              {% endif %}
+            </td>
+            <td style="font-size:12px; color:var(--text-muted); word-break:break-all;">
+              {{ esec.spf.record[:100] if esec.spf else "No SPF record found" }}
+            </td>
+          </tr>
+          <!-- DMARC -->
+          <tr>
+            <td style="color:var(--text-muted);">DMARC</td>
+            <td>
+              {% if esec.dmarc %}
+              <span class="badge" style="background:#1a4731; color:var(--green);">p={{ esec.dmarc.policy }}</span>
+              {% else %}
+              <span class="badge" style="background:#3d0a0a; color:var(--red);">✗ missing</span>
+              {% endif %}
+            </td>
+            <td style="font-size:12px; color:var(--text-muted); word-break:break-all;">
+              {{ esec.dmarc.record[:100] if esec.dmarc else "No DMARC record found" }}
+            </td>
+          </tr>
+          <!-- DKIM -->
+          <tr>
+            <td style="color:var(--text-muted);">DKIM</td>
+            <td>
+              {% if esec.dkim.selectors_found %}
+              <span class="badge" style="background:#1a4731; color:var(--green);">✓ {{ esec.dkim.selectors_found | length }} selector(s)</span>
+              {% else %}
+              <span class="badge" style="background:#2d1f00; color:var(--yellow);">? not found</span>
+              {% endif %}
+            </td>
+            <td style="font-size:12px; color:var(--text-muted);">
+              {% for sel in esec.dkim.selectors_found %}
+              <span class="tag">{{ sel }}</span>
+              {% endfor %}
+              {% if not esec.dkim.selectors_found %}No common selectors found{% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Tech Stack Section -->
+  {% if tech and (tech.techs or tech.generator) %}
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">⚙️</span> Technology Stack
+      <span class="tag" style="margin-left:auto;">{{ tech.techs | length }} detected</span>
+    </div>
+    <div class="section-body">
+      {% if tech.generator %}
+      <div style="margin-bottom:12px; font-size:13px;">
+        <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Generator</span><br>
+        <code style="color:var(--purple);">{{ tech.generator }}</code>
+      </div>
+      {% endif %}
+      {% if tech.techs %}
+      <table>
+        <thead>
+          <tr><th>Technology</th><th>Detected via</th></tr>
+        </thead>
+        <tbody>
+          {% for t in tech.techs %}
+          <tr>
+            <td><strong>{{ t }}</strong></td>
+            <td style="font-size:12px; color:var(--text-muted);">
+              {% if t in tech.details.from_headers %}<span class="tag">headers</span>{% endif %}
+              {% if t in tech.details.from_html %}<span class="tag">HTML</span>{% endif %}
+              {% if t in tech.details.from_cookies %}<span class="tag">cookies</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Shodan Section -->
+  {% if shodan and shodan.enabled %}
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🛰</span> Shodan Intelligence
+      {% if shodan.all_vulns %}
+      <span class="tag" style="margin-left:auto; color:var(--red);">{{ shodan.all_vulns | length }} CVE(s)</span>
+      {% else %}
+      <span class="tag" style="margin-left:auto;">{{ shodan.all_ports | length }} ports</span>
+      {% endif %}
+    </div>
+    <div class="section-body">
+      {% if shodan.all_ports %}
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Open Ports (all IPs)</div>
+        {% for port in shodan.all_ports %}
+        <span class="tag" style="{% if port in [22, 21, 23, 3389] %}color:var(--red);{% elif port in [80, 443, 8080, 8443] %}color:var(--green);{% endif %}">{{ port }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if shodan.all_vulns %}
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px; color:var(--red); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">CVEs Detected</div>
+        {% for cve in shodan.all_vulns %}
+        <span class="tag" style="color:var(--red);">{{ cve }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% for ip, info in shodan.results.items() %}
+      {% if not info.error %}
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px; font-family:'Courier New',monospace; margin-bottom:8px;">
+          <strong style="color:var(--accent);">{{ ip }}</strong>
+          {% if info.geo %}
+          <span style="color:var(--text-muted); font-size:11px;">
+            — {{ info.geo.country_name or '' }}{% if info.geo.city %}, {{ info.geo.city }}{% endif %}
+            {% if info.geo.org %} | {{ info.geo.org }}{% endif %}
+            {% if info.geo.asn %} | {{ info.geo.asn }}{% endif %}
+          </span>
+          {% endif %}
+          {% if info.os %}<span class="tag">{{ info.os }}</span>{% endif %}
+          {% if info.tags %}{% for tag in info.tags %}<span class="tag" style="color:var(--yellow);">{{ tag }}</span>{% endfor %}{% endif %}
+        </div>
+        {% if info.services %}
+        <table>
+          <thead><tr><th>Port</th><th>Product</th><th>Banner</th></tr></thead>
+          <tbody>
+            {% for svc in info.services[:10] %}
+            <tr>
+              <td><span class="tag">{{ svc.port }}/{{ svc.transport }}</span></td>
+              <td>{{ svc.product or '' }} {% if svc.version %}<span style="color:var(--text-muted); font-size:11px;">{{ svc.version }}</span>{% endif %}</td>
+              <td style="font-size:11px; color:var(--text-muted);">{{ svc.banner or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Diff Section -->
+  {% if diff %}
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🔄</span> Change Detection
+      <span class="tag" style="margin-left:auto; color:var(--text-muted); font-size:11px;">vs {{ diff.old_timestamp }}</span>
+    </div>
+    <div class="section-body">
+      {% macro diff_block(title, items, color, sign) %}
+      {% if items %}
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px; color:{{ color }}; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">{{ title }}</div>
+        {% for item in items %}
+        <div style="font-family:'Courier New',monospace; font-size:12px; color:{{ color }}; padding:2px 0;">{{ sign }} {{ item }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endmacro %}
+      {{ diff_block("New Paths Found", diff.new_paths, "var(--red)", "+") }}
+      {{ diff_block("Paths Disappeared", diff.removed_paths, "var(--green)", "-") }}
+      {{ diff_block("New Subdomains", diff.new_subdomains, "var(--yellow)", "+") }}
+      {{ diff_block("Subdomains Gone", diff.removed_subdomains, "var(--text-muted)", "-") }}
+      {{ diff_block("New IPs", diff.new_ips, "var(--yellow)", "+") }}
+      {{ diff_block("IPs Gone", diff.removed_ips, "var(--text-muted)", "-") }}
+      {{ diff_block("New Techs Detected", diff.new_techs, "var(--purple)", "+") }}
+      {% if diff.cdn_changed %}
+      <div style="font-size:13px;">
+        <span style="color:var(--yellow);">CDN changed:</span>
+        <code>{{ diff.old_cdn }}</code> → <code style="color:var(--purple);">{{ diff.new_cdn }}</code>
+      </div>
+      {% endif %}
+      {% if not diff.new_paths and not diff.removed_paths and not diff.new_subdomains and not diff.cdn_changed and not diff.new_ips and not diff.new_techs %}
+      <div class="empty">No significant changes detected.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Fuzzing Section -->
   <div class="section">
     <div class="section-header">
@@ -370,13 +619,54 @@
       <span class="tag" style="margin-left:auto;">{{ fuzz.paths_tested }} paths tested</span>
     </div>
     <div class="section-body">
-      {% if fuzz.findings %}
-      <table>
+      {% if fuzz_exposed %}
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--red); margin-bottom:8px;">
+        Exposed — 200 OK ({{ fuzz_exposed | length }})
+      </div>
+      <table style="margin-bottom:20px;">
         <thead>
           <tr><th>Status</th><th>Path</th><th>Content-Type</th><th>Size</th><th>URL</th></tr>
         </thead>
         <tbody>
-          {% for f in fuzz.findings %}
+          {% for f in fuzz_exposed %}
+          <tr>
+            <td><span class="badge badge-{{ f.status }}">{{ f.status }}</span></td>
+            <td><code>{{ f.path }}</code></td>
+            <td style="color:var(--text-muted); font-size:12px;">{{ f.content_type.split(';')[0] if f.content_type else '' }}</td>
+            <td style="color:var(--text-muted);">{{ f.content_length if f.content_length else '' }}</td>
+            <td><a href="{{ f.url }}" target="_blank" style="font-size:12px;">{{ f.url }}</a></td>
+          </tr>
+          {% if f.ds_store_files %}
+          <tr>
+            <td colspan="5" style="background:var(--bg); padding:8px 12px 12px 28px;">
+              <div style="font-size:11px; color:var(--yellow); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+                .DS_Store directory listing — {{ f.ds_store_files | length }} entries
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                {% for fname in f.ds_store_files[:40] %}
+                <span class="tag" style="color:var(--yellow);">{{ fname }}</span>
+                {% endfor %}
+                {% if f.ds_store_files | length > 40 %}
+                <span class="tag" style="color:var(--text-muted);">+{{ f.ds_store_files | length - 40 }} more</span>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if fuzz_restricted %}
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--orange); margin-bottom:8px;">
+        Restricted — 403/401 ({{ fuzz_restricted | length }}) &nbsp;<span style="color:var(--text-muted); font-weight:normal; text-transform:none; letter-spacing:0;">path exists, access blocked</span>
+      </div>
+      <table style="margin-bottom:20px;">
+        <thead>
+          <tr><th>Status</th><th>Path</th><th>Content-Type</th><th>Size</th><th>URL</th></tr>
+        </thead>
+        <tbody>
+          {% for f in fuzz_restricted %}
           <tr>
             <td><span class="badge badge-{{ f.status }}">{{ f.status }}</span></td>
             <td><code>{{ f.path }}</code></td>
@@ -387,8 +677,30 @@
           {% endfor %}
         </tbody>
       </table>
-      {% else %}
-      <div class="empty">No exposed paths found in {{ fuzz.paths_tested }} tested paths.</div>
+      {% endif %}
+      {% if fuzz_other %}
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:8px;">
+        Other ({{ fuzz_other | length }})
+      </div>
+      <table>
+        <thead>
+          <tr><th>Status</th><th>Path</th><th>Content-Type</th><th>Size</th><th>URL</th></tr>
+        </thead>
+        <tbody>
+          {% for f in fuzz_other %}
+          <tr>
+            <td><span class="badge badge-{{ f.status }}">{{ f.status }}</span></td>
+            <td><code>{{ f.path }}</code></td>
+            <td style="color:var(--text-muted); font-size:12px;">{{ f.content_type.split(';')[0] if f.content_type else '' }}</td>
+            <td style="color:var(--text-muted);">{{ f.content_length if f.content_length else '' }}</td>
+            <td><a href="{{ f.url }}" target="_blank" style="font-size:12px;">{{ f.url }}</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if not fuzz.findings %}
+      <div class="empty">No paths found in {{ fuzz.paths_tested }} tested paths.</div>
       {% endif %}
     </div>
   </div>
