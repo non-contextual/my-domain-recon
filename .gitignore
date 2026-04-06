@@ -1,0 +1,19 @@
+# Python 编译缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 生成的报告文件（不纳入版本控制）
+*_report.html
+*_report.md
+
+# 编辑器 / 系统
+.claude/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 虚拟环境
+venv/
+.venv/
+env/

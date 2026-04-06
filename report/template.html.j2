@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSINT Report — {{ domain }}</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --orange: #db6d28;
+      --purple: #bc8cff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+    /* Header */
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+      font-family: 'Courier New', monospace;
+    }
+    .header .meta {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    /* Summary cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .card .value {
+      font-size: 18px;
+      font-weight: 600;
+      font-family: 'Courier New', monospace;
+    }
+    .card .value.cdn { color: var(--purple); }
+    .card .value.green { color: var(--green); }
+    .card .value.yellow { color: var(--yellow); }
+    .card .value.red { color: var(--red); }
+
+    /* Section */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .section-header {
+      padding: 12px 16px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-header .icon { font-size: 16px; }
+    .section-body { padding: 16px; }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      word-break: break-all;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+
+    /* Status badge */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'Courier New', monospace;
+    }
+    .badge-200 { background: #1a4731; color: var(--green); }
+    .badge-301, .badge-302, .badge-307, .badge-308 { background: #2d1f00; color: var(--yellow); }
+    .badge-403 { background: #3d1a00; color: var(--orange); }
+    .badge-500 { background: #3d0a0a; color: var(--red); }
+    .badge-other { background: var(--surface2); color: var(--text-muted); }
+
+    /* Tag */
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      margin: 2px;
+      font-family: 'Courier New', monospace;
+    }
+
+    /* Alert */
+    .alert {
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      border-left: 3px solid;
+    }
+    .alert-red { background: #200d0d; border-color: var(--red); }
+    .alert-yellow { background: #1f1700; border-color: var(--yellow); }
+    .alert-green { background: #0d1f12; border-color: var(--green); }
+
+    /* CNAME chain */
+    .cname-chain {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+    }
+    .cname-arrow { color: var(--text-muted); }
+    .cname-node {
+      background: var(--surface2);
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .cname-node.cdn { border-color: var(--purple); color: var(--purple); }
+
+    /* Subdomain list */
+    .subdomain-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .empty { color: var(--text-muted); font-style: italic; font-size: 13px; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    code {
+      background: var(--surface2);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    .footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 11px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      margin-top: 24px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>⬡ OSINT :: {{ domain }}</h1>
+    <div class="meta">Generated {{ generated_at }} &nbsp;|&nbsp; Passive Reconnaissance Report</div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="label">Target Domain</div>
+      <div class="value" style="color:var(--accent); font-size:15px;">{{ domain }}</div>
+    </div>
+    <div class="card">
+      <div class="label">CDN / Provider</div>
+      <div class="value cdn">{{ cdn.cdn_detected or "Unknown" }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Origin IPs</div>
+      <div class="value green">{{ dns.a_records | length }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Subdomains Found</div>
+      <div class="value {% if cert.subdomains | length > 10 %}yellow{% else %}green{% endif %}">
+        {{ cert.subdomains | length }}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Exposed Paths</div>
+      <div class="value {% if fuzz.findings | length > 0 %}red{% else %}green{% endif %}">
+        {{ fuzz.findings | length }}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Registrar</div>
+      <div class="value" style="font-size:12px; color:var(--text-muted);">
+        {{ whois_data.registrar or "N/A" }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Alerts -->
+  {% if fuzz.findings %}
+  <div class="alert alert-red">
+    ⚠️ <strong>{{ fuzz.findings | length }} exposed path(s) detected</strong> —
+    including: {% for f in fuzz.findings[:3] %}<code>{{ f.path }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if fuzz.findings | length > 3 %} and more...{% endif %}
+  </div>
+  {% endif %}
+  {% if cdn.fastly_direct %}
+  <div class="alert alert-yellow">
+    🔍 <strong>Fastly origin URL detected:</strong> <code>{{ cdn.fastly_direct }}</code>
+  </div>
+  {% endif %}
+  {% if cdn.cloudfront_bucket %}
+  <div class="alert alert-yellow">
+    ☁️ <strong>CloudFront bucket exposed:</strong> <code>{{ cdn.cloudfront_bucket }}</code>
+  </div>
+  {% endif %}
+
+  <!-- DNS Section -->
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🌐</span> DNS Records
+    </div>
+    <div class="section-body">
+
+      {% if dns.cname_chain %}
+      <div style="margin-bottom:16px;">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">CNAME Chain</div>
+        <div class="cname-chain">
+          <span class="cname-node">{{ domain }}</span>
+          {% for hop in dns.cname_chain %}
+          <span class="cname-arrow">→</span>
+          <span class="cname-node {% if dns.cdn_hint %}cdn{% endif %}">{{ hop }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          {% for ip in dns.a_records %}
+          <tr><td>A</td><td>{{ ip }}</td></tr>
+          {% endfor %}
+          {% for ip in dns.aaaa_records %}
+          <tr><td>AAAA</td><td>{{ ip }}</td></tr>
+          {% endfor %}
+          {% for mx in dns.mx_records %}
+          <tr><td>MX</td><td>{{ mx }}</td></tr>
+          {% endfor %}
+          {% for ns in dns.ns_records %}
+          <tr><td>NS</td><td>{{ ns }}</td></tr>
+          {% endfor %}
+          {% for txt in dns.txt_records %}
+          <tr><td>TXT</td><td style="font-size:12px;">{{ txt }}</td></tr>
+          {% endfor %}
+          {% if not dns.a_records and not dns.mx_records and not dns.ns_records %}
+          <tr><td colspan="2" class="empty">No records resolved</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CDN Section -->
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🔀</span> CDN & Infrastructure
+    </div>
+    <div class="section-body">
+      <table>
+        <tbody>
+          <tr><td style="width:180px; color:var(--text-muted);">CDN Provider</td>
+              <td><strong style="color:var(--purple);">{{ cdn.cdn_detected or "Not detected" }}</strong>
+                {% if cdn.detection_method %}<span class="tag">via {{ cdn.detection_method }}</span>{% endif %}
+              </td></tr>
+          <tr><td style="color:var(--text-muted);">HTTP Status</td>
+              <td>
+                {% if cdn.status_code %}
+                <span class="badge badge-{{ cdn.status_code }}">{{ cdn.status_code }}</span>
+                {% else %}N/A{% endif %}
+              </td></tr>
+          <tr><td style="color:var(--text-muted);">Final URL</td>
+              <td><a href="{{ cdn.final_url }}" target="_blank">{{ cdn.final_url or "N/A" }}</a></td></tr>
+          {% if cdn.fastly_direct %}
+          <tr><td style="color:var(--text-muted);">Fastly Direct</td>
+              <td><a href="{{ cdn.fastly_direct }}" target="_blank">{{ cdn.fastly_direct }}</a></td></tr>
+          {% endif %}
+          {% if cdn.cloudfront_bucket %}
+          <tr><td style="color:var(--text-muted);">CloudFront Bucket</td>
+              <td><a href="{{ cdn.cloudfront_bucket }}" target="_blank">{{ cdn.cloudfront_bucket }}</a></td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% if cdn.key_headers %}
+      <div style="margin-top:12px;">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Key Response Headers</div>
+        <table>
+          {% for k, v in cdn.key_headers.items() %}
+          <tr><td style="width:220px; color:var(--text-muted);">{{ k }}</td><td>{{ v }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Fuzzing Section -->
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🔍</span> Path Discovery
+      <span class="tag" style="margin-left:auto;">{{ fuzz.paths_tested }} paths tested</span>
+    </div>
+    <div class="section-body">
+      {% if fuzz.findings %}
+      <table>
+        <thead>
+          <tr><th>Status</th><th>Path</th><th>Content-Type</th><th>Size</th><th>URL</th></tr>
+        </thead>
+        <tbody>
+          {% for f in fuzz.findings %}
+          <tr>
+            <td><span class="badge badge-{{ f.status }}">{{ f.status }}</span></td>
+            <td><code>{{ f.path }}</code></td>
+            <td style="color:var(--text-muted); font-size:12px;">{{ f.content_type.split(';')[0] if f.content_type else '' }}</td>
+            <td style="color:var(--text-muted);">{{ f.content_length if f.content_length else '' }}</td>
+            <td><a href="{{ f.url }}" target="_blank" style="font-size:12px;">{{ f.url }}</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">No exposed paths found in {{ fuzz.paths_tested }} tested paths.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Certificate Transparency Section -->
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">🔐</span> Certificate Transparency
+      <span class="tag" style="margin-left:auto;">{{ cert.total_certs }} certs found</span>
+    </div>
+    <div class="section-body">
+      {% if cert.wildcards %}
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Wildcards</div>
+        {% for w in cert.wildcards %}
+        <span class="tag" style="color:var(--purple);">*.{{ w }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if cert.subdomains %}
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+          Subdomains ({{ cert.subdomains | length }})
+        </div>
+        <div class="subdomain-grid">
+          {% for sub in cert.subdomains[:80] %}
+          <span class="tag">{{ sub }}</span>
+          {% endfor %}
+          {% if cert.subdomains | length > 80 %}
+          <span class="tag" style="color:var(--yellow);">+{{ cert.subdomains | length - 80 }} more</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if cert.issuers %}
+      <div>
+        <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">CA Issuers</div>
+        {% for issuer in cert.issuers[:5] %}
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">{{ issuer }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="empty">{{ cert.error or "No subdomains found in certificate transparency logs." }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- WHOIS Section -->
+  <div class="section">
+    <div class="section-header">
+      <span class="icon">📋</span> WHOIS
+    </div>
+    <div class="section-body">
+      {% if whois_data.error and not whois_data.registrar %}
+      <div class="empty">{{ whois_data.error }}</div>
+      {% else %}
+      <table>
+        <tbody>
+          {% if whois_data.registrar %}
+          <tr><td style="width:180px; color:var(--text-muted);">Registrar</td><td>{{ whois_data.registrar }}</td></tr>
+          {% endif %}
+          {% if whois_data.registrant_org %}
+          <tr><td style="color:var(--text-muted);">Registrant Org</td><td>{{ whois_data.registrant_org }}</td></tr>
+          {% endif %}
+          {% if whois_data.creation_date %}
+          <tr><td style="color:var(--text-muted);">Created</td><td>{{ whois_data.creation_date }}</td></tr>
+          {% endif %}
+          {% if whois_data.expiration_date %}
+          <tr><td style="color:var(--text-muted);">Expires</td><td>{{ whois_data.expiration_date }}</td></tr>
+          {% endif %}
+          {% if whois_data.updated_date %}
+          <tr><td style="color:var(--text-muted);">Updated</td><td>{{ whois_data.updated_date }}</td></tr>
+          {% endif %}
+          {% if whois_data.name_servers %}
+          <tr><td style="color:var(--text-muted);">Name Servers</td>
+              <td>{% for ns in whois_data.name_servers %}<span class="tag">{{ ns }}</span> {% endfor %}</td></tr>
+          {% endif %}
+          {% if whois_data.emails %}
+          <tr><td style="color:var(--text-muted);">Emails</td>
+              <td>{% for e in whois_data.emails %}<span class="tag">{{ e }}</span> {% endfor %}</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="footer">
+    OSINT Recon Tool &nbsp;|&nbsp; Passive reconnaissance only &nbsp;|&nbsp; {{ domain }} &nbsp;|&nbsp; {{ generated_at }}
+  </div>
+
+</div>
+</body>
+</html>
