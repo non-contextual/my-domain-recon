@@ -38,6 +38,7 @@ from rich import print as rprint
 sys.path.insert(0, os.path.dirname(__file__))
 from recon import dns_module, cdn_module, cert_module, fuzz_module, whois_module
 from recon import tech_module, shodan_module
+from recon import headers_module, tls_module, ip_module, wayback_module
 from report import renderer
 
 
@@ -116,6 +117,67 @@ def run_recon(domain: str, skip_fuzz: bool = False, output: str | None = None,
         progress.update(task, completed=True, description=(
             f"[green]✓[/green] WHOIS — "
             f"{whois_result['registrar'] or 'N/A'}"
+        ))
+
+        # --- Security Headers ---
+        task = progress.add_task("[cyan]Security Headers Analysis...", total=None)
+        # headers_module 自己发请求以获取完整响应头（cdn_module 只保存部分头）
+        headers_result = headers_module.run(domain)
+        results["headers"] = headers_result
+        grade = headers_result["grade"]
+        grade_color = {"A": "green", "B": "yellow", "C": "red", "F": "bold red"}.get(grade, "dim")
+        leaks_count = len([l for l in headers_result["leaks"] if l["has_version"]])
+        progress.update(task, completed=True, description=(
+            f"[green]✓[/green] Security Headers — "
+            f"Grade [{grade_color}]{grade}[/{grade_color}] ({headers_result['score']}/100)"
+            + (f"  [yellow]{leaks_count} version leak(s)[/yellow]" if leaks_count else "")
+        ))
+
+        # --- TLS Analysis ---
+        task = progress.add_task("[cyan]TLS/SSL Analysis...", total=None)
+        tls_result = tls_module.run(domain)
+        results["tls"] = tls_result
+        tls_proto = tls_result.get("protocol") or "N/A"
+        tls_days  = tls_result.get("days_until_expiry")
+        tls_warn  = tls_result.get("expiry_warning") or tls_result.get("expiry_critical")
+        expiry_note = (f"  [{'red' if tls_result.get('expiry_critical') else 'yellow'}]"
+                       f"cert expires in {tls_days}d[/{'red' if tls_result.get('expiry_critical') else 'yellow'}]"
+                       if tls_warn else "")
+        progress.update(task, completed=True, description=(
+            f"[green]✓[/green] TLS — {tls_proto}  "
+            f"{tls_result.get('cipher_name') or ''}"
+            + expiry_note
+        ))
+
+        # --- IP Intelligence ---
+        task = progress.add_task("[cyan]IP Intelligence...", total=None)
+        ip_result = ip_module.run(
+            a_records=dns_result.get("a_records", []),
+            aaaa_records=dns_result.get("aaaa_records", []),
+        )
+        results["ip"] = ip_result
+        first_ip_info = next(iter(ip_result["ips"].values()), {}) if ip_result["ips"] else {}
+        isp_str = first_ip_info.get("isp") or first_ip_info.get("org") or "N/A"
+        leaks_v6 = len(ip_result.get("ipv6_leaks", []))
+        progress.update(task, completed=True, description=(
+            f"[green]✓[/green] IP — {isp_str}"
+            + (f"  [red]{leaks_v6} IPv6 leak(s)[/red]" if leaks_v6 else "")
+        ))
+
+        # --- Wayback Machine ---
+        task = progress.add_task("[cyan]Wayback Machine...", total=None)
+        wayback_result = wayback_module.run(domain)
+        results["wayback"] = wayback_result
+        wb_sensitive = len(wayback_result.get("sensitive_urls", []))
+        wb_note = (
+            f"{wayback_result['first_seen']} → {wayback_result['last_seen']}, "
+            f"{wayback_result['snapshot_count']} URLs"
+            if wayback_result.get("available") else
+            wayback_result.get("error") or "no data"
+        )
+        progress.update(task, completed=True, description=(
+            f"[green]✓[/green] Wayback — {wb_note}"
+            + (f"  [red]{wb_sensitive} sensitive path(s)[/red]" if wb_sensitive else "")
         ))
 
         # --- Shodan (optional) ---
@@ -202,6 +264,10 @@ def run_recon(domain: str, skip_fuzz: bool = False, output: str | None = None,
         whois_data=results["whois"],
         tech=results["tech"],
         shodan=results["shodan"],
+        headers=results.get("headers"),
+        tls=results.get("tls"),
+        ip=results.get("ip"),
+        wayback=results.get("wayback"),
         diff=diff_result,
         output_path=output,
     )
@@ -324,6 +390,10 @@ def _print_summary(domain: str, results: dict):
     whois_r = results["whois"]
     tech = results["tech"]
     shodan = results["shodan"]
+    headers = results.get("headers", {})
+    tls = results.get("tls", {})
+    ip = results.get("ip", {})
+    wayback = results.get("wayback", {})
 
     fuzz_exposed = [f for f in fuzz["findings"] if f["status"] == 200]
     fuzz_restricted = [f for f in fuzz["findings"] if f["status"] in (401, 403)]
@@ -358,6 +428,48 @@ def _print_summary(domain: str, results: dict):
         if vulns_count:
             shodan_val += f"  [red]{vulns_count} CVE(s)[/red]"
         table.add_row("Shodan", shodan_val)
+
+    # Security Headers
+    if headers:
+        grade = headers.get("grade", "?")
+        grade_color = {"A": "green", "B": "yellow", "C": "red", "F": "bold red"}.get(grade, "dim")
+        leaks = [l for l in headers.get("leaks", []) if l["has_version"]]
+        hdr_val = f"[{grade_color}]Grade {grade}[/{grade_color}] ({headers.get('score', 0)}/100)"
+        if leaks:
+            hdr_val += f"  [yellow]{len(leaks)} version leak(s)[/yellow]"
+        table.add_row("Security Headers", hdr_val)
+
+    # TLS
+    if tls and not tls.get("error"):
+        proto = tls.get("protocol") or "N/A"
+        risk  = tls.get("protocol_risk", "ok")
+        proto_color = {"best": "green", "ok": "dim", "high": "yellow", "critical": "red"}.get(risk, "dim")
+        days  = tls.get("days_until_expiry")
+        tls_val = f"[{proto_color}]{proto}[/{proto_color}]"
+        if days is not None:
+            exp_color = "red" if tls.get("expiry_critical") else ("yellow" if tls.get("expiry_warning") else "dim")
+            tls_val += f"  [{exp_color}]cert: {days}d[/{exp_color}]"
+        table.add_row("TLS", tls_val)
+
+    # IP Intelligence
+    if ip and ip.get("ips"):
+        first = next(iter(ip["ips"].values()), {})
+        isp = first.get("isp") or first.get("org") or "N/A"
+        asn = first.get("asn") or ""
+        ip_val = f"{isp}"
+        if asn:
+            ip_val += f"  [dim]{asn}[/dim]"
+        if ip.get("ipv6_leaks"):
+            ip_val += f"  [red]{len(ip['ipv6_leaks'])} IPv6 leak(s)[/red]"
+        table.add_row("IP / ASN", ip_val)
+
+    # Wayback
+    if wayback and wayback.get("available"):
+        wb_val = f"{wayback['snapshot_count']} URLs ({wayback['first_seen']} → {wayback['last_seen']})"
+        sens = len(wayback.get("sensitive_urls", []))
+        if sens:
+            wb_val += f"  [red]{sens} sensitive[/red]"
+        table.add_row("Wayback Machine", wb_val)
 
     table.add_row("Registrar", whois_r["registrar"] or "[dim]N/A[/dim]")
 

@@ -26,6 +26,10 @@ def render(
     whois_data: dict,
     tech: dict | None = None,
     shodan: dict | None = None,
+    headers: dict | None = None,
+    tls: dict | None = None,
+    ip: dict | None = None,
+    wayback: dict | None = None,
     diff: dict | None = None,
     output_path: str | None = None,
 ) -> tuple[str, str]:
@@ -41,20 +45,26 @@ def render(
     html_path = os.path.abspath(output_path if output_path else f"{base}_report.html")
     md_path = html_path.replace(".html", ".md")
 
-    tech = tech or {}
-    shodan = shodan or {}
+    tech    = tech    or {}
+    shodan  = shodan  or {}
+    headers = headers or {}
+    tls     = tls     or {}
+    ip      = ip      or {}
+    wayback = wayback or {}
 
     # 预分类 fuzz findings
-    fuzz_exposed = [f for f in fuzz.get("findings", []) if f["status"] == 200]
+    fuzz_exposed    = [f for f in fuzz.get("findings", []) if f["status"] == 200]
     fuzz_restricted = [f for f in fuzz.get("findings", []) if f["status"] in (401, 403)]
-    fuzz_other = [f for f in fuzz.get("findings", []) if f["status"] not in (200, 401, 403)]
+    fuzz_other      = [f for f in fuzz.get("findings", []) if f["status"] not in (200, 401, 403)]
 
     # --- HTML ---
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
     html = env.get_template(TEMPLATE_FILE).render(
         domain=domain, generated_at=generated_at,
         dns=dns, cdn=cdn, cert=cert, fuzz=fuzz, whois_data=whois_data,
-        tech=tech, shodan=shodan, diff=diff,
+        tech=tech, shodan=shodan,
+        headers=headers, tls=tls, ip=ip, wayback=wayback,
+        diff=diff,
         fuzz_exposed=fuzz_exposed, fuzz_restricted=fuzz_restricted, fuzz_other=fuzz_other,
     )
     with open(html_path, "w", encoding="utf-8") as f:
@@ -62,7 +72,8 @@ def render(
 
     # --- Markdown ---
     md = _render_markdown(domain, generated_at, dns, cdn, cert, fuzz, whois_data,
-                          tech, shodan, diff, fuzz_exposed, fuzz_restricted)
+                          tech, shodan, headers, tls, ip, wayback,
+                          diff, fuzz_exposed, fuzz_restricted)
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md)
 
@@ -79,12 +90,20 @@ def _render_markdown(
     whois_data: dict,
     tech: dict | None = None,
     shodan: dict | None = None,
+    headers: dict | None = None,
+    tls: dict | None = None,
+    ip: dict | None = None,
+    wayback: dict | None = None,
     diff: dict | None = None,
     fuzz_exposed: list | None = None,
     fuzz_restricted: list | None = None,
 ) -> str:
-    tech = tech or {}
-    shodan = shodan or {}
+    tech    = tech    or {}
+    shodan  = shodan  or {}
+    headers = headers or {}
+    tls     = tls     or {}
+    ip      = ip      or {}
+    wayback = wayback or {}
 
     if fuzz_exposed is None:
         fuzz_exposed = [f for f in fuzz.get("findings", []) if f["status"] == 200]
@@ -116,6 +135,19 @@ def _render_markdown(
     esec = dns.get("email_security", {})
     if esec:
         w(f"| Email Security | {esec.get('score', 'N/A')} |")
+    # Security Headers
+    if headers.get("grade"):
+        w(f"| Security Headers | Grade {headers['grade']} ({headers.get('score', 0)}/100) |")
+    # TLS
+    if tls.get("protocol"):
+        w(f"| TLS Protocol | {tls['protocol']} |")
+    # ASN
+    first_ip_info = next(iter(ip.get("ips", {}).values()), {})
+    if first_ip_info.get("isp"):
+        w(f"| ISP / ASN | {first_ip_info['isp']} |")
+    # Wayback
+    if wayback.get("available"):
+        w(f"| Wayback First Seen | {wayback.get('first_seen') or 'N/A'} |")
     w(f"| Registrar | {whois_data.get('registrar') or 'N/A'} |")
     w("")
 
@@ -141,6 +173,33 @@ def _render_markdown(
     # Email security missing
     if esec.get("score") == "missing":
         alerts.append("**EMAIL SECURITY MISSING:** No SPF or DMARC configured — domain may be spoofable")
+    # Security headers grade F/C
+    if headers.get("grade") in ("F", "C"):
+        missing = ", ".join(f"`{h}`" for h in headers.get("missing_critical", []))
+        alerts.append(f"**SECURITY HEADERS Grade {headers['grade']}:** Missing critical headers: {missing or 'see details'}")
+    if headers.get("leaks"):
+        version_leaks = [l for l in headers["leaks"] if l["has_version"]]
+        if version_leaks:
+            leaked = ", ".join(f"`{l['header']}: {l['value']}`" for l in version_leaks[:3])
+            alerts.append(f"**VERSION LEAK IN HEADERS:** {leaked}")
+    # TLS warnings
+    if tls.get("expiry_critical"):
+        alerts.append(f"**CERT EXPIRY CRITICAL:** Certificate expires in {tls['days_until_expiry']} day(s)!")
+    elif tls.get("expiry_warning"):
+        alerts.append(f"**CERT EXPIRY WARNING:** Certificate expires in {tls['days_until_expiry']} days")
+    if tls.get("protocol_risk") in ("critical", "high"):
+        alerts.append(f"**WEAK TLS PROTOCOL:** {tls.get('protocol')} is deprecated")
+    if tls.get("self_signed"):
+        alerts.append("**SELF-SIGNED CERTIFICATE:** Certificate is self-signed")
+    # IPv6 leaks
+    if ip.get("ipv6_leaks"):
+        for leak in ip["ipv6_leaks"]:
+            alerts.append(f"**IPv6 INTERNAL IP LEAK:** `{leak['ipv6']}` embeds private IP `{leak['embedded_private_ip']}`")
+    # Wayback sensitive
+    if wayback.get("sensitive_urls"):
+        paths = ", ".join(f"`{u['path']}`" for u in wayback["sensitive_urls"][:3])
+        more  = f" (+{len(wayback['sensitive_urls'])-3} more)" if len(wayback["sensitive_urls"]) > 3 else ""
+        alerts.append(f"**WAYBACK SENSITIVE PATHS:** {paths}{more}")
     if alerts:
         w("## Alerts\n")
         for a in alerts:
@@ -292,6 +351,103 @@ def _render_markdown(
         w("")
     if not fuzz.get("findings"):
         w("_No paths found._\n")
+
+    # --- Security Headers ---
+    if headers.get("security"):
+        grade = headers.get("grade", "?")
+        score = headers.get("score", 0)
+        w(f"## Security Headers\n\n**Grade:** `{grade}` ({score}/100)\n")
+        w("| Header | Present | Value | Note |")
+        w("|---|---|---|---|")
+        for key, info in headers["security"].items():
+            present = "✅" if info["present"] else "❌"
+            val = f"`{info['value'][:60]}`" if info["value"] else "—"
+            w(f"| {info['friendly']} | {present} | {val} | {info['note']} |")
+        w("")
+        if headers.get("leaks"):
+            w("**Info Leakage in Headers:**\n")
+            w("| Header | Value | Version Exposed |")
+            w("|---|---|---|")
+            for leak in headers["leaks"]:
+                flag = "⚠️ YES" if leak["has_version"] else "—"
+                w(f"| `{leak['header']}` | `{leak['value'][:80]}` | {flag} |")
+            w("")
+
+    # --- TLS ---
+    if tls and not tls.get("error"):
+        w("## TLS / SSL Analysis\n")
+        w("| Field | Value |")
+        w("|---|---|")
+        proto_risk = tls.get("protocol_risk", "ok")
+        proto_note = {"best": "✅", "ok": "✓", "high": "⚠️ deprecated", "critical": "❌ insecure"}.get(proto_risk, "")
+        w(f"| Protocol | `{tls.get('protocol') or 'N/A'}` {proto_note} |")
+        w(f"| Cipher | `{tls.get('cipher_name') or 'N/A'}` ({tls.get('cipher_bits') or '?'} bits) |")
+        w(f"| Cipher Strength | {tls.get('cipher_note') or '—'} |")
+        w(f"| Certificate Subject | `{tls.get('cert_subject') or '—'}` |")
+        w(f"| Issuer | {tls.get('cert_issuer_org') or ''} ({tls.get('cert_issuer_cn') or '—'}) |")
+        w(f"| CA Type | {tls.get('ca_type') or '—'} |")
+        w(f"| Self-Signed | {'⚠️ YES' if tls.get('self_signed') else 'No'} |")
+        days = tls.get("days_until_expiry")
+        if days is not None:
+            exp_flag = ("❌ CRITICAL" if tls.get("expiry_critical") else
+                        ("⚠️ WARNING" if tls.get("expiry_warning") else "✓"))
+            w(f"| Cert Expiry | `{tls.get('cert_not_after') or '—'}` ({days} days) {exp_flag} |")
+        w("")
+    elif tls.get("error"):
+        w(f"## TLS / SSL Analysis\n\n_Error: {tls['error']}_\n")
+
+    # --- IP Intelligence ---
+    if ip.get("ips"):
+        w("## IP Intelligence\n")
+        for addr, info in ip["ips"].items():
+            if info.get("error"):
+                w(f"**{addr}:** _{info['error']}_\n")
+                continue
+            w(f"**{addr}**\n")
+            w("| Field | Value |")
+            w("|---|---|")
+            for field, label in [
+                ("country", "Country"), ("region", "Region"), ("city", "City"),
+                ("isp", "ISP"), ("org", "Organization"), ("asn", "ASN"),
+                ("reverse_dns", "Reverse DNS"),
+            ]:
+                val = info.get(field)
+                if val:
+                    w(f"| {label} | {val} |")
+            flags = []
+            if info.get("is_hosting"): flags.append("hosting provider")
+            if info.get("is_proxy"):   flags.append("⚠️ proxy/VPN")
+            if flags:
+                w(f"| Tags | {', '.join(flags)} |")
+            w("")
+        if ip.get("ipv6_leaks"):
+            w("### IPv6 Internal IP Leakage\n")
+            for leak in ip["ipv6_leaks"]:
+                w(f"> ⚠️ **{leak['ipv6']}** → embedded private IP: `{leak['embedded_private_ip']}`")
+                w(f"> {leak['note']}\n")
+            w("")
+
+    # --- Wayback Machine ---
+    if wayback.get("available"):
+        w("## Wayback Machine\n")
+        w("| Field | Value |")
+        w("|---|---|")
+        w(f"| First Seen | {wayback.get('first_seen') or '—'} |")
+        w(f"| Last Seen  | {wayback.get('last_seen') or '—'} |")
+        w(f"| Unique URLs (archived) | {wayback.get('snapshot_count', 0)} |")
+        w("")
+        if wayback.get("sensitive_urls"):
+            w(f"### Historically Exposed Sensitive Paths ({len(wayback['sensitive_urls'])})\n")
+            w("> 以下路径曾在历史快照中以 HTTP 200 出现，即使当前已删除，可能仍有残留或备份。\n")
+            w("| Last Seen | Path | Full URL |")
+            w("|---|---|---|")
+            for item in wayback["sensitive_urls"][:30]:
+                w(f"| {item['timestamp']} | `{item['path']}` | {item['url']} |")
+            if len(wayback["sensitive_urls"]) > 30:
+                w(f"\n_...and {len(wayback['sensitive_urls'])-30} more_\n")
+            w("")
+    elif wayback.get("error"):
+        w(f"## Wayback Machine\n\n_{wayback['error']}_\n")
 
     # --- Cert ---
     w(f"## Certificate Transparency\n\n_{cert.get('total_certs', 0)} certificates found._\n")

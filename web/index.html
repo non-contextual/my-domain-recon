@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSINT Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #c9d1d9; --dim: #8b949e; --cyan: #58a6ff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922; --orange: #e3b341; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono','Fira Code','Cascadia Code',monospace; font-size: 13px; line-height: 1.6; }
+  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  input, select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 11px; font-family: inherit; font-size: 13px; outline: none; transition: border-color .15s; width: 100%; }
+  input:focus, select:focus { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(88,166,255,.12); }
+  input::placeholder { color: var(--dim); }
+  button { cursor: pointer; font-family: inherit; font-size: 13px; border: none; border-radius: 6px; padding: 7px 16px; transition: opacity .15s, transform .08s; white-space: nowrap; }
+  button:hover { opacity: .85; } button:active { transform: scale(.97); }
+  .btn-scan  { background: var(--cyan); color: #000; font-weight: 700; padding: 7px 20px; }
+  .btn-stop  { background: rgba(248,81,73,.18); color: var(--red); border: 1px solid rgba(248,81,73,.35); font-weight: 700; }
+  .btn-ghost { background: transparent; color: var(--dim); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); border-color: var(--dim); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+  .tag-cyan   { background: rgba(88,166,255,.15);  color: var(--cyan); }
+  .tag-green  { background: rgba(63,185,80,.15);   color: var(--green); }
+  .tag-red    { background: rgba(248,81,73,.15);   color: var(--red); }
+  .tag-yellow { background: rgba(210,153,34,.15);  color: var(--yellow); }
+  .tag-purple { background: rgba(188,140,255,.15); color: var(--purple); }
+  .tag-dim    { background: rgba(139,148,158,.1);  color: var(--dim); }
+  .log-row { display: grid; grid-template-columns: 16px 140px 42px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(48,54,61,.5); align-items: baseline; }
+  .log-row:last-child { border-bottom: none; }
+  .spin { display: inline-block; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .metric { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .metric-label { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+  .metric-value { font-size: 15px; font-weight: 600; line-height: 1.3; }
+  details summary { cursor: pointer; list-style: none; padding: 6px 0; color: var(--dim); font-size: 12px; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary:hover { color: var(--text); }
+  details summary::before { content: '▶ '; font-size: 9px; }
+  details[open] summary::before { content: '▼ '; }
+  a { color: var(--cyan); text-decoration: none; } a:hover { text-decoration: underline; }
+  .tab { padding: 7px 14px; border-radius: 6px; cursor: pointer; color: var(--dim); transition: all .12s; font-size: 13px; border: 1px solid transparent; user-select: none; }
+  .tab.active { background: var(--panel); color: var(--text); border-color: var(--border); }
+  .tab:hover:not(.active) { color: var(--text); }
+  .tab:active { transform: scale(.95); opacity: .8; }
+  .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  .progress-track { background: var(--border); border-radius: 3px; height: 3px; overflow: hidden; margin-top: 10px; }
+  .progress-fill { height: 100%; background: var(--cyan); border-radius: 3px; transition: width .25s; }
+  .port-row { display: grid; grid-template-columns: 56px 110px 1fr; gap: 10px; padding: 4px 0; border-bottom: 1px solid rgba(48,54,61,.4); align-items: baseline; }
+  .port-row:last-child { border-bottom: none; }
+  .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 10px; }
+  .settings-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border); margin-top: 12px; }
+  .setting-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 160px; }
+  .setting-label { color: var(--dim); font-size: 11px; }
+</style>
+</head>
+<body>
+<div style="max-width:1140px; margin:0 auto; padding:20px;">
+
+  <!-- ── Header ── -->
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span style="font-size:17px; font-weight:700; color:var(--cyan); letter-spacing:-.3px;">[ OSINT ]</span>
+      <span style="color:var(--dim); font-size:12px;">passive infrastructure &amp; active recon</span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <div id="scan-badge" style="display:none; align-items:center; gap:5px; color:var(--cyan); font-size:11px;">
+        <span class="pulse">●</span> <span id="scan-badge-text">Scanning</span>
+      </div>
+      <div style="position:relative;">
+        <button class="btn-ghost" onclick="toggleReports()" id="reports-btn" style="padding:6px 12px; font-size:12px;">Reports ▾</button>
+        <div id="reports-dd" style="display:none; position:absolute; right:0; top:34px; background:var(--panel); border:1px solid var(--border); border-radius:8px; min-width:260px; z-index:100; padding:4px 0; box-shadow:0 8px 24px rgba(0,0,0,.4);">
+          <div id="reports-list" style="max-height:300px; overflow-y:auto;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tabs ── -->
+  <div style="display:flex; gap:5px; margin-bottom:14px;">
+    <div class="tab active" id="tab-passive" onclick="setMode('passive')">🌐 Passive Recon</div>
+    <div class="tab"        id="tab-ports"   onclick="setMode('ports')">🔍 Port Scan</div>
+    <div class="tab"        id="tab-network" onclick="setMode('network')">🔬 Network</div>
+    <div class="tab"        id="tab-ftp"     onclick="setMode('ftp')">🗂 FTP Browser</div>
+  </div>
+
+  <!-- ── Input Card ── -->
+  <div class="card" style="margin-bottom:14px;">
+
+    <!-- Passive -->
+    <div id="input-passive">
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="domain-input" type="text" placeholder="github.com" style="flex:1;"
+               onkeydown="if(event.key==='Enter')startPassive()">
+        <label style="display:flex; align-items:center; gap:5px; color:var(--dim); white-space:nowrap; cursor:pointer;">
+          <input type="checkbox" id="no-fuzz" style="width:auto; padding:0; border:none; background:none;"> Skip fuzz
+        </label>
+        <button id="stop-btn-passive" class="btn-stop" style="display:none;" onclick="stopScan()">■ Stop</button>
+        <button id="scan-btn-passive" class="btn-scan" onclick="startPassive()">Scan ▶</button>
+      </div>
+    </div>
+
+    <!-- Port Scan -->
+    <div id="input-ports" style="display:none;">
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="host-input" type="text" placeholder="192.168.1.1" style="flex:1;"
+               onkeydown="if(event.key==='Enter')startPorts()">
+        <select id="port-mode" style="width:150px; flex-shrink:0;">
+          <option value="common">Common ports</option>
+          <option value="1-10000">1 – 10 000</option>
+          <option value="full">Full 1–65535</option>
+        </select>
+        <button id="stop-btn-ports" class="btn-stop" style="display:none;" onclick="stopScan()">■ Stop</button>
+        <button id="scan-btn-ports" class="btn-scan" onclick="startPorts()">Scan ▶</button>
+      </div>
+    </div>
+
+    <!-- FTP Browser -->
+    <div id="input-ftp" style="display:none;">
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="ftp-host" type="text" placeholder="10.132.219.5" style="flex:2;"
+               onkeydown="if(event.key==='Enter')connectFTP()">
+        <input id="ftp-port" type="number" placeholder="21" style="width:80px; flex-shrink:0;">
+        <button class="btn-scan" onclick="connectFTP()">Connect ▶</button>
+      </div>
+    </div>
+
+    <!-- Network -->
+    <div id="input-network" style="display:none;">
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span style="color:var(--dim); flex:1; font-size:12px;">Diagnose the local network environment: NAT layers, DNS tampering, blocked ports, MTU, IPv6, HTTP injection.</span>
+        <button id="stop-btn-network" class="btn-stop" style="display:none;" onclick="stopScan()">■ Stop</button>
+        <button id="scan-btn-network" class="btn-scan" onclick="startNetwork()">Analyze ▶</button>
+      </div>
+    </div>
+
+    <!-- Settings row (proxy + Shodan) -->
+    <div class="settings-row" id="settings-row">
+      <div class="setting-group">
+        <span class="setting-label">HTTP Proxy</span>
+        <input id="proxy-input" type="text" placeholder="http://127.0.0.1:7890"
+               oninput="saveSettings()" style="font-size:12px;">
+      </div>
+      <div class="setting-group" style="max-width:220px;">
+        <span class="setting-label">Shodan API Key</span>
+        <input id="shodan-input" type="password" placeholder="optional"
+               oninput="saveSettings()" style="font-size:12px;">
+      </div>
+      <div style="color:var(--dim); font-size:11px; align-self:flex-end; padding-bottom:1px;">
+        Settings saved locally
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Main Area ── -->
+  <div id="main-area" style="display:none;">
+    <div id="content-area">
+
+      <!-- Passive / Network: split log + results -->
+      <div id="split-view" style="display:grid; grid-template-columns:1fr; gap:14px;">
+
+        <!-- Progress Log -->
+        <div class="card" id="log-panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <span style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.08em;">Progress</span>
+            <span id="elapsed-badge" style="color:var(--dim); font-size:11px; display:none;"></span>
+          </div>
+          <!-- Column headers -->
+          <div style="display:grid; grid-template-columns:16px 140px 42px 1fr; gap:8px; padding-bottom:6px; border-bottom:1px solid var(--border); margin-bottom:4px; color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.05em;">
+            <span></span><span>Module</span><span>Time</span><span>Result</span>
+          </div>
+          <div id="log-lines"></div>
+        </div>
+
+        <!-- Results Panel -->
+        <div id="results-panel" style="display:none;"></div>
+
+      </div>
+
+      <!-- Port Scan table -->
+      <div id="port-section" style="display:none; margin-top:14px;" class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <span style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.08em;">Open Ports</span>
+          <span id="open-count" style="color:var(--green); font-weight:700;">0</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="ports-bar" style="width:0%;"></div></div>
+        <div style="display:flex; justify-content:space-between; color:var(--dim); font-size:11px; margin-top:5px; margin-bottom:10px;">
+          <span id="ports-progress-text">–</span><span id="ports-pct">0%</span>
+        </div>
+        <div style="display:grid; grid-template-columns:56px 110px 1fr; gap:10px; color:var(--dim); font-size:10px; text-transform:uppercase; padding-bottom:5px; border-bottom:1px solid var(--border); margin-bottom:4px;">
+          <span>Port</span><span>Service</span><span>Banner</span>
+        </div>
+        <div id="port-rows" style="max-height:500px; overflow-y:auto;"></div>
+      </div>
+
+      <!-- Network terminal output -->
+      <div id="network-section" style="display:none; margin-top:14px;" class="card">
+        <div style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:10px;">Output</div>
+        <pre id="network-lines" style="white-space:pre-wrap; word-break:break-all; font-size:12px; max-height:560px; overflow-y:auto; color:var(--text);"></pre>
+      </div>
+
+      <!-- FTP Browser -->
+      <div id="ftp-section" style="display:none; margin-top:14px;" class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <span style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.08em;">FTP Browser</span>
+          <span id="ftp-status" style="color:var(--dim); font-size:11px;"></span>
+        </div>
+        <div id="ftp-tree" style="max-height:600px; overflow-y:auto; font-size:13px;"></div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let currentMode = 'passive';
+let currentES   = null;
+let scanStart   = null;
+let elapsedTimer = null;
+const runningLines = {};
+
+// ── Persist settings in localStorage ─────────────────────────────────────────
+function saveSettings() {
+  localStorage.setItem('osint_proxy',  document.getElementById('proxy-input').value);
+  localStorage.setItem('osint_shodan', document.getElementById('shodan-input').value);
+}
+function loadSettings() {
+  document.getElementById('proxy-input').value  = localStorage.getItem('osint_proxy')  || '';
+  document.getElementById('shodan-input').value = localStorage.getItem('osint_shodan') || '';
+}
+loadSettings();
+
+// ── Mode switching ────────────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  ['passive','ports','network','ftp'].forEach(m => {
+    document.getElementById(`tab-${m}`).classList.toggle('active', m === mode);
+    document.getElementById(`input-${m}`).style.display = m === mode ? '' : 'none';
+  });
+  // proxy/Shodan 设置只在 passive/ports/network 有意义
+  document.getElementById('settings-row').style.display = mode === 'ftp' ? 'none' : '';
+}
+
+// ── Reports dropdown ──────────────────────────────────────────────────────────
+async function toggleReports() {
+  const dd = document.getElementById('reports-dd');
+  if (dd.style.display !== 'none') { dd.style.display = 'none'; return; }
+  const list = document.getElementById('reports-list');
+  list.innerHTML = '<div style="padding:8px 14px; color:var(--dim); font-size:12px;">Loading…</div>';
+  dd.style.display = '';
+  try {
+    const data = await fetch('/api/reports').then(r => r.json());
+    list.innerHTML = data.length
+      ? data.map(r => `<a href="/reports/${r.name}" target="_blank"
+          style="display:block; padding:6px 14px; font-size:12px; color:var(--text);"
+          onmouseover="this.style.background='rgba(139,148,158,.08)'"
+          onmouseout="this.style.background=''">${r.name}</a>`).join('')
+      : '<div style="padding:8px 14px; color:var(--dim); font-size:12px;">No reports yet</div>';
+  } catch(e) { list.innerHTML = `<div style="padding:8px 14px; color:var(--red);">${e}</div>`; }
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#reports-btn') && !e.target.closest('#reports-dd'))
+    document.getElementById('reports-dd').style.display = 'none';
+});
+
+// ── Shared UI helpers ─────────────────────────────────────────────────────────
+function resetUI() {
+  if (currentES) { currentES.close(); currentES = null; }
+  clearInterval(elapsedTimer);
+  Object.keys(runningLines).forEach(k => delete runningLines[k]);
+
+  document.getElementById('main-area').style.display   = '';
+  document.getElementById('log-lines').innerHTML        = '';
+  document.getElementById('results-panel').style.display = 'none';
+  document.getElementById('results-panel').innerHTML    = '';
+  document.getElementById('port-section').style.display  = 'none';
+  document.getElementById('port-rows').innerHTML         = '';
+  document.getElementById('network-section').style.display = 'none';
+  document.getElementById('network-lines').textContent  = '';
+  document.getElementById('open-count').textContent     = '0';
+  document.getElementById('ports-bar').style.width      = '0%';
+  document.getElementById('ports-progress-text').textContent = '–';
+  document.getElementById('ports-pct').textContent      = '0%';
+  document.getElementById('split-view').style.gridTemplateColumns = '1fr';
+  document.getElementById('elapsed-badge').style.display = 'none';
+  setScanningState(false);
+}
+
+function setScanningState(scanning) {
+  const badge = document.getElementById('scan-badge');
+  badge.style.display = scanning ? 'flex' : 'none';
+
+  ['passive','ports','network'].forEach(m => {
+    const scanBtn = document.getElementById(`scan-btn-${m}`);
+    const stopBtn = document.getElementById(`stop-btn-${m}`);
+    if (scanBtn) scanBtn.style.display = scanning ? 'none' : '';
+    if (stopBtn) stopBtn.style.display = scanning ? '' : 'none';
+  });
+
+  if (scanning) {
+    scanStart = Date.now();
+    elapsedTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - scanStart) / 1000);
+      document.getElementById('scan-badge-text').textContent = `Scanning  ${s}s`;
+      document.getElementById('elapsed-badge').textContent   = `${s}s`;
+      document.getElementById('elapsed-badge').style.display = '';
+    }, 1000);
+  } else {
+    clearInterval(elapsedTimer);
+  }
+}
+
+function stopScan() {
+  if (currentES) { currentES.close(); currentES = null; }
+  addLog('⏹', 'var(--dim)', 'Stopped', '', 'var(--dim)');
+  setScanningState(false);
+}
+
+function addLog(icon, iconColor, module, summary, summaryColor, elapsed) {
+  const el = document.createElement('div');
+  el.className = 'log-row';
+  const timeStr = elapsed != null ? `<span style="color:var(--dim);">${elapsed}s</span>` : '';
+  el.innerHTML = `
+    <span style="color:${iconColor}; text-align:center;">${icon}</span>
+    <span style="color:var(--dim);">${module}</span>
+    <span style="color:var(--dim); font-size:11px;">${timeStr}</span>
+    <span style="color:${summaryColor || 'var(--text)'};">${summary}</span>`;
+  document.getElementById('log-lines').appendChild(el);
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  return el;
+}
+
+function handleProgress(ev) {
+  const { module, status, label, summary, elapsed } = ev;
+
+  if (status === 'running') {
+    const el = addLog('<span class="spin">⟳</span>', 'var(--cyan)',
+                      label || module, summary || '…', 'var(--dim)', null);
+    runningLines[module] = el;
+    return;
+  }
+
+  const existing = runningLines[module];
+  const icon  = status === 'done' ? '✓' : status === 'skipped' ? '⏭' : '✗';
+  const ic    = status === 'done' ? 'var(--green)' : status === 'skipped' ? 'var(--dim)' : 'var(--red)';
+  const sc    = status === 'done' ? 'var(--text)'  : status === 'skipped' ? 'var(--dim)' : 'var(--red)';
+  const timeStr = elapsed != null ? `<span style="color:var(--dim);">${elapsed}s</span>` : '';
+
+  if (existing) {
+    existing.children[0].innerHTML      = icon;
+    existing.children[0].style.color    = ic;
+    existing.children[1].textContent    = label || module;
+    existing.children[2].innerHTML      = timeStr;
+    existing.children[3].textContent    = summary || '';
+    existing.children[3].style.color    = sc;
+    delete runningLines[module];
+  } else {
+    addLog(icon, ic, label || module, summary || '', sc, elapsed);
+  }
+}
+
+// ── Passive Recon ─────────────────────────────────────────────────────────────
+function startPassive() {
+  const domain = document.getElementById('domain-input').value.trim();
+  if (!domain) return;
+  const noFuzz = document.getElementById('no-fuzz').checked;
+  const proxy  = document.getElementById('proxy-input').value.trim();
+  resetUI();
+  setScanningState(true);
+
+  const params = new URLSearchParams({ domain, no_fuzz: noFuzz });
+  if (proxy) params.set('proxy', proxy);
+  const es = new EventSource(`/api/passive/scan?${params}`);
+  currentES = es;
+
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'progress') handleProgress(ev);
+    else if (ev.type === 'done') {
+      es.close(); currentES = null;
+      setScanningState(false);
+      renderPassiveResults(ev);
+    }
+  };
+  es.onerror = () => {
+    addLog('✗', 'var(--red)', 'Error', 'Connection lost');
+    setScanningState(false);
+    es.close();
+  };
+}
+
+function renderPassiveResults(ev) {
+  const s = ev.summary || {};
+  const panel = document.getElementById('results-panel');
+  panel.style.display = '';
+  document.getElementById('split-view').style.gridTemplateColumns = '1fr 1fr';
+
+  const gradeColor = {'A':'var(--green)','B':'var(--yellow)','C':'var(--orange)','F':'var(--red)'}[s.headers_grade] || 'var(--dim)';
+  const emailColor = {'strong':'var(--green)','partial':'var(--yellow)','missing':'var(--red)'}[s.email_security?.score] || 'var(--dim)';
+  const tlsColor   = s.tls_critical ? 'var(--red)' : (s.tls_days != null && s.tls_days < 30) ? 'var(--yellow)' : 'var(--green)';
+
+  panel.innerHTML = `
+    <div class="card" style="height:100%; overflow-y:auto; display:flex; flex-direction:column; gap:14px;">
+
+      <!-- domain + report link -->
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700; color:var(--cyan); font-size:14px;">${s.domain}</span>
+        ${ev.report_url ? `<a href="${ev.report_url}" target="_blank"
+          style="font-size:11px; padding:4px 10px; border:1px solid var(--border); border-radius:5px; color:var(--dim); background:var(--panel2);">Full Report ↗</a>` : ''}
+      </div>
+
+      <!-- metric cards -->
+      <div class="results-grid">
+        <div class="metric">
+          <div class="metric-label">CDN</div>
+          <div class="metric-value" style="color:var(--purple);">${s.cdn || '—'}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">HTTP Status</div>
+          <div class="metric-value" style="color:${s.http_status === 200 ? 'var(--green)' : 'var(--dim)'};">${s.http_status || '—'}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Sec Headers</div>
+          <div class="metric-value" style="color:${gradeColor};">
+            ${s.headers_grade || '—'}
+            ${s.headers_score != null ? `<span style="font-size:11px; color:var(--dim); font-weight:400;"> ${s.headers_score}/100</span>` : ''}
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">TLS</div>
+          <div class="metric-value" style="color:${tlsColor};">
+            ${s.tls_protocol || '—'}
+            ${s.tls_days != null ? `<span style="font-size:11px; color:var(--dim); font-weight:400;"> ${s.tls_days}d</span>` : ''}
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Email Security</div>
+          <div class="metric-value" style="color:${emailColor};">${s.email_security?.score || '—'}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">IP / ASN</div>
+          <div class="metric-value" style="font-size:11px; font-weight:400; color:var(--dim);">${s.isp || '—'}${s.country ? ` · ${s.country}` : ''}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Subdomains</div>
+          <div class="metric-value" style="color:${s.subdomains_count ? 'var(--yellow)' : 'var(--dim)'};">${s.subdomains_count}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Exposed Paths</div>
+          <div class="metric-value" style="color:${s.exposed_paths?.length ? 'var(--red)' : 'var(--green)'};">${s.exposed_paths?.length || 0}</div>
+        </div>
+      </div>
+
+      <!-- tech stack -->
+      ${s.techs?.length ? `
+      <div>
+        <div style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">Tech Stack</div>
+        <div style="display:flex; flex-wrap:wrap; gap:5px;">${s.techs.map(t => `<span class="tag tag-cyan">${t}</span>`).join('')}</div>
+      </div>` : ''}
+
+      <!-- IPs -->
+      ${s.a_records?.length ? `
+      <div>
+        <div style="color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">IPs</div>
+        <div style="display:flex; flex-wrap:wrap; gap:5px;">${s.a_records.map(ip => `<span class="tag tag-dim">${ip}</span>`).join('')}</div>
+      </div>` : ''}
+
+      <!-- exposed paths -->
+      ${s.exposed_paths?.length ? `
+      <details>
+        <summary><span class="tag tag-red">Exposed ${s.exposed_paths.length}</span></summary>
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:3px;">
+          ${s.exposed_paths.map(p => `
+            <div style="display:flex; gap:10px; padding:3px 0; border-bottom:1px solid rgba(48,54,61,.4); font-size:12px;">
+              <span style="color:var(--red); flex-shrink:0;">200</span>
+              <a href="${p.url}" target="_blank" style="color:var(--text); word-break:break-all;">${p.path}</a>
+            </div>`).join('')}
+        </div>
+      </details>` : ''}
+
+      <!-- restricted paths -->
+      ${s.restricted_paths?.length ? `
+      <details>
+        <summary><span class="tag tag-yellow">Restricted ${s.restricted_paths.length}</span></summary>
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:2px; font-size:12px;">
+          ${s.restricted_paths.map(p => `<div style="color:var(--yellow);">${p.path}</div>`).join('')}
+        </div>
+      </details>` : ''}
+
+      <!-- subdomains -->
+      ${s.subdomains?.length ? `
+      <details>
+        <summary><span class="tag tag-yellow">Subdomains ${s.subdomains_count}</span>${s.subdomains_count > 30 ? ' <span style="color:var(--dim); font-size:11px;">(showing first 30)</span>' : ''}</summary>
+        <div style="margin-top:6px; display:grid; grid-template-columns:1fr 1fr; gap:2px; max-height:180px; overflow-y:auto; font-size:12px;">
+          ${s.subdomains.map(d => `<div style="color:var(--dim);">${d}</div>`).join('')}
+        </div>
+      </details>` : ''}
+
+      <!-- whois -->
+      ${s.registrar ? `
+      <div style="color:var(--dim); font-size:11px; padding-top:4px; border-top:1px solid var(--border);">
+        <span style="color:var(--text);">${s.registrar}</span>
+        ${s.whois_created ? `<span> · created ${s.whois_created.slice(0,10)}</span>` : ''}
+      </div>` : ''}
+
+    </div>`;
+}
+
+// ── Port Scan ─────────────────────────────────────────────────────────────────
+function startPorts() {
+  const host  = document.getElementById('host-input').value.trim();
+  const mode  = document.getElementById('port-mode').value;
+  const proxy = document.getElementById('proxy-input').value.trim();
+  if (!host) return;
+  resetUI();
+  setScanningState(true);
+  document.getElementById('port-section').style.display = '';
+
+  const params = new URLSearchParams({ host, mode });
+  if (proxy) params.set('proxy', proxy);
+  const es = new EventSource(`/api/active/ports?${params}`);
+  currentES = es;
+  let openCount = 0;
+
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'start') {
+      addLog('<span class="spin">⟳</span>', 'var(--cyan)', host,
+             `Scanning ${ev.total} ports  (${ev.mode})`, 'var(--dim)');
+    } else if (ev.type === 'progress') {
+      const pct = Math.round(ev.scanned / ev.total * 100);
+      document.getElementById('ports-progress-text').textContent = `${ev.scanned} / ${ev.total}`;
+      document.getElementById('ports-pct').textContent = `${pct}%`;
+      document.getElementById('ports-bar').style.width = `${pct}%`;
+    } else if (ev.type === 'open') {
+      openCount++;
+      document.getElementById('open-count').textContent = openCount;
+      const row = document.createElement('div');
+      row.className = 'port-row';
+      row.innerHTML = `
+        <span style="color:${ev.is_ftp ? 'var(--orange)' : 'var(--green)'}; font-weight:700;">${ev.port}</span>
+        <span style="color:var(--cyan);">${ev.service || '—'}${ev.is_ftp ? ' <span class="tag tag-yellow" style="font-size:10px;">FTP</span>' : ''}</span>
+        <span style="color:var(--dim); word-break:break-all; font-size:12px;">${ev.banner || ''}</span>`;
+      document.getElementById('port-rows').appendChild(row);
+    } else if (ev.type === 'done') {
+      es.close(); currentES = null;
+      setScanningState(false);
+      document.getElementById('ports-bar').style.width = '100%';
+      addLog('✓', 'var(--green)', host, `Done — ${openCount} open port(s)`);
+    } else if (ev.type === 'error') {
+      addLog('✗', 'var(--red)', 'Error', ev.message);
+      setScanningState(false); es.close();
+    }
+  };
+  es.onerror = () => { addLog('✗', 'var(--red)', 'Error', 'Connection lost'); setScanningState(false); es.close(); };
+}
+
+// ── Network ───────────────────────────────────────────────────────────────────
+function startNetwork() {
+  resetUI();
+  setScanningState(true);
+  document.getElementById('network-section').style.display = '';
+  const pre = document.getElementById('network-lines');
+  addLog('<span class="spin">⟳</span>', 'var(--cyan)', 'Diagnosis', 'Running…', 'var(--dim)');
+
+  const es = new EventSource('/api/active/network');
+  currentES = es;
+
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'line') {
+      pre.textContent += ev.text + '\n';
+      pre.scrollTop = pre.scrollHeight;
+    } else if (ev.type === 'done') {
+      es.close(); currentES = null;
+      setScanningState(false);
+      // update the spinning line
+      const spin = document.querySelector('#log-lines .log-row .spin');
+      if (spin) {
+        const row = spin.closest('.log-row');
+        row.children[0].innerHTML = '✓'; row.children[0].style.color = 'var(--green)';
+        row.children[3].textContent = 'Complete';
+      }
+    } else if (ev.type === 'error') {
+      addLog('✗', 'var(--red)', 'Error', ev.message);
+      setScanningState(false); es.close();
+    }
+  };
+  es.onerror = () => { addLog('✗', 'var(--red)', 'Error', 'Connection lost'); setScanningState(false); es.close(); };
+}
+
+// ── FTP Browser ───────────────────────────────────────────────────────────────
+let ftpHost = '', ftpPort = 21;
+
+function connectFTP() {
+  ftpHost = document.getElementById('ftp-host').value.trim();
+  ftpPort = parseInt(document.getElementById('ftp-port').value || '21');
+  if (!ftpHost) return;
+
+  document.getElementById('main-area').style.display = '';
+  document.getElementById('ftp-section').style.display = '';
+  document.getElementById('ftp-tree').innerHTML = '';
+  document.getElementById('ftp-status').textContent = `${ftpHost}:${ftpPort}`;
+
+  loadFTPDir('/', document.getElementById('ftp-tree'), true);
+}
+
+async function loadFTPDir(path, container, isRoot = false) {
+  const spinner = document.createElement('div');
+  spinner.style.cssText = 'color:var(--dim); padding:4px 0; font-size:12px;';
+  spinner.textContent = '⟳ Loading…';
+  container.appendChild(spinner);
+
+  try {
+    const res = await fetch(
+      `/api/ftp/ls?host=${encodeURIComponent(ftpHost)}&port=${ftpPort}&path=${encodeURIComponent(path)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    spinner.remove();
+
+    if (data.items.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--dim); padding:4px 0; font-size:12px; padding-left:16px;';
+      empty.textContent = '(empty)';
+      container.appendChild(empty);
+      return;
+    }
+
+    for (const item of data.items) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex; align-items:baseline; gap:10px; padding:3px 0; border-bottom:1px solid rgba(48,54,61,.3);';
+
+      if (item.is_dir) {
+        // folder row
+        const icon = document.createElement('span');
+        icon.style.cssText = 'color:var(--cyan); cursor:pointer; padding-left:16px; white-space:nowrap; flex-shrink:0;';
+        icon.textContent = '▶ 📁 ' + item.name + '/';
+
+        const meta = document.createElement('span');
+        meta.style.cssText = 'color:var(--dim); font-size:11px;';
+        meta.textContent = item.date;
+
+        const children = document.createElement('div');
+        children.style.display = 'none';
+        children.style.paddingLeft = '16px';
+        let loaded = false;
+
+        icon.onclick = () => {
+          if (children.style.display === 'none') {
+            icon.textContent = '▼ 📂 ' + item.name + '/';
+            children.style.display = '';
+            if (!loaded) {
+              loaded = true;
+              const childPath = (path.endsWith('/') ? path : path + '/') + item.name;
+              loadFTPDir(childPath, children);
+            }
+          } else {
+            icon.textContent = '▶ 📁 ' + item.name + '/';
+            children.style.display = 'none';
+          }
+        };
+
+        row.appendChild(icon);
+        row.appendChild(meta);
+        container.appendChild(row);
+        container.appendChild(children);
+
+      } else {
+        // file row
+        const filePath = (path.endsWith('/') ? path : path + '/') + item.name;
+        const dlUrl = `/api/ftp/dl?host=${encodeURIComponent(ftpHost)}&port=${ftpPort}&path=${encodeURIComponent(filePath)}`;
+
+        const link = document.createElement('a');
+        link.href = dlUrl;
+        link.style.cssText = 'color:var(--text); padding-left:16px; flex:1; word-break:break-all;';
+        link.textContent = '📄 ' + item.name;
+
+        const meta = document.createElement('span');
+        meta.style.cssText = 'color:var(--dim); font-size:11px; white-space:nowrap; flex-shrink:0;';
+        meta.textContent = fmtSize(item.size) + '  ' + item.date;
+
+        row.appendChild(link);
+        row.appendChild(meta);
+        container.appendChild(row);
+      }
+    }
+  } catch(e) {
+    spinner.style.color = 'var(--red)';
+    spinner.textContent = '✗ ' + e.message;
+  }
+}
+
+function fmtSize(b) {
+  if (!b) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+// keyboard shortcut: Ctrl/Cmd+Enter
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    if (currentMode === 'passive') startPassive();
+    else if (currentMode === 'ports') startPorts();
+    else startNetwork();
+  }
+});
+</script>
+</body>
+</html>

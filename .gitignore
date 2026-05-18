@@ -17,3 +17,17 @@ Thumbs.db
 venv/
 .venv/
 env/
+
+# 扫描产出的数据和报告（含敏感信息，不入库）
+active_scan/ftp_data.json
+active_scan/ftp_tree.html
+active_scan/poc_evidence.json
+active_scan/risk_summary.json
+active_scan/last_report.json
+active_scan/vulnerability_report.md
+active_scan/test_*
+active_scan/preview*.png
+*_snapshot.json
+.txt
+*.txt
+.gstack/
